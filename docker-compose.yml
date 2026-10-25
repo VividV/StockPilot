@@ -1,0 +1,98 @@
+# StockPilot — local / single-server deployment.
+#   cp .env.example .env    (then edit SECRET_KEY and passwords)
+#   docker compose up --build
+# Web app: http://localhost:3000   API docs: http://localhost:8000/api/docs
+# Services: db (PostgreSQL), api (FastAPI), worker (emails/alerts/scheduled checks), web (Next.js)
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-stockpilot}
+      POSTGRES_USER: ${POSTGRES_USER:-stockpilot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stockpilot}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-stockpilot}:${POSTGRES_PASSWORD:-stockpilot}@db:5432/${POSTGRES_DB:-stockpilot}
+      SECRET_KEY: ${SECRET_KEY:-dev-only-secret-change-me-0123456789abcdef}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      SMTP_HOST: ${SMTP_HOST:-}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_SMS_FROM: ${TWILIO_SMS_FROM:-}
+      TWILIO_WHATSAPP_FROM: ${TWILIO_WHATSAPP_FROM:-}
+      BILLING_ENABLED: ${BILLING_ENABLED:-false}
+      PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY:-}
+      BILLING_CURRENCY: ${BILLING_CURRENCY:-NGN}
+      TRIAL_DAYS: ${TRIAL_DAYS:-14}
+      GRACE_DAYS: ${GRACE_DAYS:-7}
+      PLAN_PRICES: ${PLAN_PRICES:-}
+    volumes:
+      - attachments:/app/data/attachments
+    ports:
+      - "${API_PORT:-8000}:8000"
+
+  worker:
+    build: ./backend
+    command: ["worker"]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy   # the API runs the migrations first
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-stockpilot}:${POSTGRES_PASSWORD:-stockpilot}@db:5432/${POSTGRES_DB:-stockpilot}
+      SECRET_KEY: ${SECRET_KEY:-dev-only-secret-change-me-0123456789abcdef}
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
+      EMAIL_FROM: ${EMAIL_FROM:-StockPilot <no-reply@stockpilot.local>}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_SMS_FROM: ${TWILIO_SMS_FROM:-}
+      TWILIO_WHATSAPP_FROM: ${TWILIO_WHATSAPP_FROM:-}
+      BILLING_ENABLED: ${BILLING_ENABLED:-false}
+      PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY:-}
+      BILLING_CURRENCY: ${BILLING_CURRENCY:-NGN}
+      TRIAL_DAYS: ${TRIAL_DAYS:-14}
+      GRACE_DAYS: ${GRACE_DAYS:-7}
+      PLAN_PRICES: ${PLAN_PRICES:-}
+    healthcheck:
+      disable: true
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        BACKEND_URL: http://api:8000
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+
+volumes:
+  pgdata:
+  attachments:
